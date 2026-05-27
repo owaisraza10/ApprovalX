@@ -12,10 +12,15 @@ app.use(express.json());
 // 1. DATABASE CONNECTION
 // ==========================================
 // VERCEL FIX 1: Use Environment Variable for security in production
-const dbURI = process.env.MONGODB_URI || 'mongodb+srv://approval_db_user:Approval@cluster0.wn4xkbz.mongodb.net/?appName=Cluster0'; 
-mongoose.connect(dbURI)
+const dbURI = process.env.MONGODB_URI || 'mongodb+srv://approval_db_user:Approval@cluster0.wn4xkbz.mongodb.net/ApprovalDB?appName=Cluster0'; 
+
+mongoose.connect(dbURI, {
+    serverSelectionTimeoutMS: 5000, // Fails faster if broken (5 sec instead of 30)
+    family: 4 // THE FIX: Forces IPv4, which Vercel and MongoDB both love
+})
     .then(() => console.log('✅ Connected to MongoDB Cloud!'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
+
 
 const requestSchema = new mongoose.Schema({
     name: String,
