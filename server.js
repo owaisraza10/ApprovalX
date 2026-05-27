@@ -1,6 +1,8 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+// NEW: Import Firebase Admin for Push Notifications
+const admin = require('firebase-admin');
 
 const app = express();
 const PORT = 3000;
@@ -9,18 +11,27 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================================
+// 0. FIREBASE ADMIN SETUP
+// ==========================================
+// Initializes Firebase securely using Vercel Environment Variables
+if (!admin.apps.length) {
+    admin.initializeApp({
+        credential: admin.credential.cert({
+            projectId: process.env.FIREBASE_PROJECT_ID,
+            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+            // The .replace() is crucial because Vercel sometimes escapes the \n in private keys
+            privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        }),
+    });
+}
+
+// ==========================================
 // 1. DATABASE CONNECTION
 // ==========================================
-// VERCEL FIX 1: Use Environment Variable for security in production
-const dbURI = process.env.MONGODB_URI || 'mongodb+srv://approval_db_user:Approval@cluster0.wn4xkbz.mongodb.net/ApprovalDB?appName=Cluster0'; 
-
-mongoose.connect(dbURI, {
-    serverSelectionTimeoutMS: 5000, // Fails faster if broken (5 sec instead of 30)
-    family: 4 // THE FIX: Forces IPv4, which Vercel and MongoDB both love
-})
+const dbURI = process.env.MONGODB_URI || 'mongodb+srv://approval_db_user:Approval@cluster0.wn4xkbz.mongodb.net/?appName=Cluster0'; 
+mongoose.connect(dbURI, { family: 4 })
     .then(() => console.log('✅ Connected to MongoDB Cloud!'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
-
 
 const requestSchema = new mongoose.Schema({
     name: String,
@@ -30,7 +41,8 @@ const requestSchema = new mongoose.Schema({
     description: String,
     state: String,    
     city: String,     
-    address: String,  
+    address: String, 
+    fcmToken: String, // NEW: Stores the user's unique phone notification address
     status: { type: String, default: 'Pending' },
     createdAt: { type: Date, default: Date.now }
 });
@@ -41,7 +53,7 @@ const Request = mongoose.model('Request', requestSchema);
 // 2. ANDROID APP APIs
 // ==========================================
 
-// Create a new request (Used by SubmissionFragment)
+// Create a new request
 app.post('/api/requests', async (req, res) => {
     try {
         console.log("📥 New request incoming:", req.body);
@@ -53,11 +65,10 @@ app.post('/api/requests', async (req, res) => {
     }
 });
 
-// Fetch requests for a specific user (Used by Home & My Requests)
+// Fetch requests for a specific user
 app.get('/api/requests/user/:phone', async (req, res) => {
     try {
         const userPhone = req.params.phone;
-        // Find all requests matching this phone number, newest first
         const userRequests = await Request.find({ phone: userPhone }).sort({ createdAt: -1 });
         res.status(200).json(userRequests);
     } catch (err) {
@@ -69,10 +80,34 @@ app.get('/api/requests/user/:phone', async (req, res) => {
 // 3. ADMIN DASHBOARD APIs
 // ==========================================
 
-// Update Status
+// UPGRADED: Update Status AND Send Push Notification
 app.post('/api/requests/:id/status', async (req, res) => {
     try {
-        await Request.findByIdAndUpdate(req.params.id, { status: req.body.status });
+        // Find the request and update it, returning the newly updated document
+        const updatedRequest = await Request.findByIdAndUpdate(
+            req.params.id, 
+            { status: req.body.status },
+            { new: true }
+        );
+
+        // If we successfully updated it AND the user has an fcmToken on file, send the notification!
+        if (updatedRequest && updatedRequest.fcmToken) {
+            const message = {
+                notification: {
+                    title: 'ApprovalX Status Update',
+                    body: `Good news! Your ${updatedRequest.service} is now: ${updatedRequest.status}`
+                },
+                token: updatedRequest.fcmToken
+            };
+            
+            try {
+                await admin.messaging().send(message);
+                console.log("🔔 Push notification fired successfully!");
+            } catch (notiErr) {
+                console.error("❌ Failed to send notification:", notiErr);
+            }
+        }
+
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: "Failed to update status" });
@@ -205,7 +240,6 @@ app.get('/', (req, res) => res.redirect('/admin'));
 // ==========================================
 // 5. VERCEL DEPLOYMENT LOGIC
 // ==========================================
-// VERCEL FIX 2: Export the app for Serverless, listen on port for local dev
 if (process.env.VERCEL) {
     module.exports = app;
 } else {
