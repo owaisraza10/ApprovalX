@@ -85,9 +85,9 @@ app.post('/api/requests/:id/status', async (req, res) => {
     try {
         // Find the request and update it, returning the newly updated document
         const updatedRequest = await Request.findByIdAndUpdate(
-            req.params.id, 
+            req.params.id,
             { status: req.body.status },
-            { new: true }
+            { returnDocument: 'after' }
         );
 
         // If we successfully updated it AND the user has an fcmToken on file, send the notification!
