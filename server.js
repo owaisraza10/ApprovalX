@@ -76,7 +76,16 @@ app.post('/api/requests', async (req, res) => {
         await newRequest.save();
         res.status(200).json({ success: true, message: "Request saved to database!" });
     } catch (err) {
-        res.status(500).json({ error: "Failed to save to database" });
+        console.error("❌ Admin Dashboard Error:", err);
+        res.status(500).send(`
+            <div style="padding: 40px; font-family: sans-serif; text-align: center; background: #07090f; height: 100vh; color: white;">
+                <h1 style="color: #f87171;">Dashboard Crashed</h1>
+                <p style="color: #8898b8; margin-top: 10px;">The server encountered an error while fetching data.</p>
+                <div style="background: #111827; border: 1px solid #1f2d45; color: #fbbf24; padding: 20px; border-radius: 10px; margin-top: 20px; text-align: left; font-family: monospace; display: inline-block; max-width: 800px;">
+                    <strong>ERROR:</strong> ${err.message}
+                </div>
+            </div>
+        `);
     }
 });
 
