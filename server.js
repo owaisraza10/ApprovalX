@@ -131,6 +131,23 @@ app.get('/api/requests/user/:phone', async (req, res) => {
     }
 });
 
+// NEW: Sync FCM Token globally (Used by Android App on launch)
+app.post('/api/users/token', async (req, res) => {
+    try {
+        const { phone, fcmToken } = req.body;
+        
+        // Update the token on all active/pending requests for this user
+        await Request.updateMany(
+            { phone: phone, status: { $in: ['Pending', 'Processing'] } }, 
+            { $set: { fcmToken: fcmToken } }
+        );
+        
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to sync token" });
+    }
+});
+
 // ==========================================
 // 4. ADMIN DASHBOARD APIs (PROTECTED)
 // ==========================================
@@ -341,7 +358,7 @@ input:focus { border-color: var(--accent); }
 
     <div class="field">
         <label>Username</label>
-        <input type="text" id="user" autocomplete="username" />
+        <input type="text" id="user" autocomplete="username" autofocus/>
     </div>
     <div class="field">
         <label>Password</label>
