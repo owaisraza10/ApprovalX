@@ -43,12 +43,44 @@ const requireAuth = (req, res, next) => {
 };
 
 // ==========================================
-// 2. DATABASE CONNECTION
+// 2. BULLETPROOF SERVERLESS DB CONNECTION
 // ==========================================
 const dbURI = process.env.MONGODB_URI || 'mongodb+srv://approval_db_user:Approval@cluster0.wn4xkbz.mongodb.net/?appName=Cluster0';
-mongoose.connect(dbURI)
-    .then(() => console.log('✅ Connected to MongoDB Cloud!'))
-    .catch(err => console.error('❌ MongoDB Connection Error:', err));
+
+let cachedPromise = null;
+
+const connectDB = async () => {
+    if (mongoose.connection.readyState === 1) return;
+    if (cachedPromise) {
+        await cachedPromise;
+        return;
+    }
+    cachedPromise = mongoose.connect(dbURI, {
+        serverSelectionTimeoutMS: 5000, 
+        bufferCommands: false
+    }).then(() => {
+        console.log('✅ MongoDB Connected (Bulletproof Mode)!');
+    }).catch((err) => {
+        cachedPromise = null; 
+        console.error('❌ MongoDB Connection Error:', err);
+    });
+    await cachedPromise;
+};
+
+// VERCEL FIX: Skip the DB check for the login page so the HTML serves INSTANTLY.
+app.use(async (req, res, next) => {
+    if (req.path === '/login' || req.path === '/auth/login' || req.path === '/api/wakeup') {
+        return next();
+    }
+    await connectDB();
+    next();
+});
+
+// NEW: Background route to wake up the server and database
+app.get('/api/wakeup', async (req, res) => {
+    await connectDB();
+    res.json({ status: 'ready' });
+});
 
 const requestSchema = new mongoose.Schema({
     name: String,
@@ -192,70 +224,88 @@ html, body {
     color: var(--text);
     font-family: var(--font);
     -webkit-font-smoothing: antialiased;
-    /* PERF: single gradient, GPU-composited, no repaints */
     background-image: radial-gradient(ellipse 70% 50% at 30% 20%, rgba(79,140,255,0.09), transparent 60%),
                       radial-gradient(ellipse 50% 40% at 75% 75%, rgba(167,139,250,0.07), transparent 55%);
     display: flex;
     align-items: center;
     justify-content: center;
     min-height: 100vh;
+    overflow: hidden;
 }
-.card {
-    width: 100%;
-    max-width: 400px;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 22px;
-    padding: 44px 38px;
-    box-shadow: 0 32px 80px rgba(0,0,0,0.55);
-    will-change: transform;
-    animation: popIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
-    text-align: center;
-    position: relative;
-    z-index: 1;
+
+/* --- LOADER STYLES --- */
+#loaderOverlay {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 9999; transition: opacity 0.6s ease, visibility 0.6s ease;
 }
-@keyframes popIn {
-    from { opacity: 0; transform: translateY(18px) scale(0.97); }
-    to   { opacity: 1; transform: translateY(0)    scale(1);    }
-}
-.logo {
-    width: 52px; height: 52px;
-    border-radius: 14px;
+.loader-logo {
+    width: 60px; height: 60px; border-radius: 16px;
     background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
     display: flex; align-items: center; justify-content: center;
-    font-weight: 800; font-size: 20px; color: #fff;
-    margin: 0 auto 18px;
-    letter-spacing: -0.5px;
-    box-shadow: 0 0 0 6px rgba(79,140,255,0.1), 0 8px 24px rgba(79,140,255,0.25);
+    font-weight: 800; font-size: 24px; color: #fff; letter-spacing: -0.5px;
+    margin-bottom: 24px;
+    animation: pulseLogo 1.5s infinite alternate ease-in-out;
+}
+.loader-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; letter-spacing: 0.5px; }
+.loader-sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+.progress-bar {
+    width: 140px; height: 4px; background: rgba(255,255,255,0.08);
+    border-radius: 100px; overflow: hidden; position: relative;
+}
+.progress-fill {
+    position: absolute; top: 0; left: 0; bottom: 0; width: 50%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 100px;
+    animation: slideProgress 1.2s infinite ease-in-out;
+}
+
+@keyframes pulseLogo {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(79,140,255,0.4); }
+    100% { transform: scale(1.05); box-shadow: 0 0 20px 10px rgba(79,140,255,0); }
+}
+@keyframes slideProgress {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(200%); }
+}
+
+/* --- LOGIN CARD STYLES --- */
+.card {
+    width: 100%; max-width: 400px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 22px;
+    padding: 44px 38px; box-shadow: 0 32px 80px rgba(0,0,0,0.55);
+    text-align: center; position: relative; z-index: 1;
+    opacity: 0; transform: translateY(20px); transition: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.card.show { opacity: 1; transform: translateY(0); }
+.logo {
+    width: 52px; height: 52px; border-radius: 14px;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 20px; color: #fff; margin: 0 auto 18px;
+    letter-spacing: -0.5px; box-shadow: 0 0 0 6px rgba(79,140,255,0.1), 0 8px 24px rgba(79,140,255,0.25);
 }
 h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 6px; }
 .sub { color: var(--muted); font-size: 13.5px; margin-bottom: 30px; }
 .field { margin-bottom: 14px; text-align: left; }
 label  { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.9px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
 input  {
-    width: 100%; padding: 13px 15px;
-    background: #0d1424; border: 1px solid var(--border);
-    border-radius: 11px; color: var(--text);
-    font-family: var(--font); font-size: 14px; outline: none;
+    width: 100%; padding: 13px 15px; background: #0d1424; border: 1px solid var(--border);
+    border-radius: 11px; color: var(--text); font-family: var(--font); font-size: 14px; outline: none;
     transition: border-color 0.18s;
 }
 input:focus { border-color: var(--accent); }
 .btn {
-    width: 100%; padding: 14px; margin-top: 18px;
-    border: none; border-radius: 11px;
+    width: 100%; padding: 14px; margin-top: 18px; border: none; border-radius: 11px;
     background: linear-gradient(90deg, var(--accent) 0%, var(--accent2) 100%);
     color: #fff; font-family: var(--font); font-weight: 700; font-size: 15px;
-    cursor: pointer; letter-spacing: 0.2px;
-    transition: transform 0.15s, opacity 0.15s;
-    position: relative; overflow: hidden;
+    cursor: pointer; transition: transform 0.15s, opacity 0.15s;
 }
 .btn:hover { transform: translateY(-2px); }
 .btn:active { transform: translateY(0); opacity: 0.9; }
 .btn.loading { opacity: 0.7; pointer-events: none; }
 .btn.loading::after {
-    content: '';
-    position: absolute; inset: 0;
-    background: rgba(255,255,255,0.08);
+    content: ''; position: absolute; inset: 0; background: rgba(255,255,255,0.08);
     animation: shimmer 0.9s infinite;
 }
 @keyframes shimmer {
@@ -263,10 +313,9 @@ input:focus { border-color: var(--accent); }
     100% { transform: translateX(100%); }
 }
 .error-msg {
-    margin-top: 14px; padding: 10px 14px;
-    background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.2);
-    border-radius: 9px; color: var(--red); font-size: 13px;
-    display: none;
+    margin-top: 14px; padding: 10px 14px; background: rgba(248,113,113,0.1);
+    border: 1px solid rgba(248,113,113,0.2); border-radius: 9px; color: var(--red);
+    font-size: 13px; display: none;
 }
 .error-msg.show { display: block; animation: shake 0.35s ease; }
 @keyframes shake {
@@ -274,18 +323,25 @@ input:focus { border-color: var(--accent); }
     25%      { transform: translateX(-6px); }
     75%      { transform: translateX(6px); }
 }
-.card { isolation: isolate; }
 </style>
 </head>
 <body>
-<div class="card">
+
+<div id="loaderOverlay">
+    <div class="loader-logo">AX</div>
+    <div class="loader-title">Waking up secure server</div>
+    <div class="loader-sub">Establishing database connection...</div>
+    <div class="progress-bar"><div class="progress-fill"></div></div>
+</div>
+
+<div class="card" id="loginCard">
     <div class="logo">AX</div>
     <h1>ApprovalX Admin</h1>
     <p class="sub">Sign in to manage client requests.</p>
 
     <div class="field">
         <label>Username</label>
-        <input type="text" id="user" autocomplete="username" autofocus/>
+        <input type="text" id="user" autocomplete="username" />
     </div>
     <div class="field">
         <label>Password</label>
@@ -297,6 +353,33 @@ input:focus { border-color: var(--accent); }
 </div>
 
 <script>
+    // 1. BACKGROUND WAKEUP LOGIC
+    document.addEventListener('DOMContentLoaded', () => {
+        const loader = document.getElementById('loaderOverlay');
+        const card = document.getElementById('loginCard');
+
+        // Ping the server to wake up MongoDB
+        fetch('/api/wakeup')
+            .then(res => res.json())
+            .then(() => {
+                // Once awake, fade out loader and reveal login card
+                loader.style.opacity = '0';
+                setTimeout(() => {
+                    loader.style.visibility = 'hidden';
+                    card.classList.add('show');
+                }, 600);
+            })
+            .catch(() => {
+                // If it fails, still let them try logging in just in case
+                loader.style.opacity = '0';
+                setTimeout(() => {
+                    loader.style.visibility = 'hidden';
+                    card.classList.add('show');
+                }, 600);
+            });
+    });
+
+    // 2. LOGIN LOGIC
     const btn = document.getElementById('loginBtn');
     const errEl = document.getElementById('err');
 
@@ -319,16 +402,19 @@ input:focus { border-color: var(--accent); }
             if (data.success) {
                 window.location.href = '/admin';
             } else {
-                btn.textContent = 'Access Dashboard';
-                btn.classList.remove('loading');
+                resetBtn();
                 showError('Invalid credentials. Please try again.');
             }
         })
         .catch(() => {
-            btn.textContent = 'Access Dashboard';
-            btn.classList.remove('loading');
+            resetBtn();
             showError('Network error. Please try again.');
         });
+    }
+
+    function resetBtn() {
+        btn.textContent = 'Access Dashboard';
+        btn.classList.remove('loading');
     }
 
     function showError(msg) {
